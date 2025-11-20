@@ -47,34 +47,97 @@ Refer to output in your narrative like this: x=`r x` .
 Load any required packages in a code chunk (you may need to install some packages):
 
 ```{r, message=F, warning=F}
+library(tidycensus)
+library(tigris)
+library(sf)
+library(sp)
+library(raster)
+library(exactextractr)
 library(tidyverse)
-library(leaflet)
-library(kableExtra)
-library(htmlwidgets)
-library(widgetframe)
-knitr::opts_chunk$set(widgetframe_widgets_dir = 'widgets' ) 
-knitr::opts_chunk$set(cache=TRUE)  # cache the results for quick compiling
+library(osmdata)
+library(dodgr)
+library(classInt)
+library(ggplot2)
 ```
 
 ## Download and clean all required data
 
-```{r}
-n=20
-data=data.frame(x=runif(n,-180,180),
-                y=runif(n,-60,60),
-                size = runif(n, 5, 20),
-                category = factor(
-                  sample(letters[1:5], n, replace = TRUE)
-                  ),
-                value = rnorm(n))
+```{r, message=F, warning=F}
+# Erie County block groups
+census_api_key("695c0ea3ada22e99f85eb2200fd51a7d00469573", install = TRUE, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+acs_year <- 2023
+
+bg <- get_acs(
+  geography = "block group",
+  variables = c(POP = "B01003_001"),
+  state = "NY",
+  county = "Erie",
+  year = acs_year,
+  geometry = TRUE,
+  output = "wide") |>
+  transmute(GEOID, POP = POPE, geometry) |>
+  st_make_valid() |>
+  mutate(bg_id = row_number())
+
+bg <- st_transform(bg, 26918)
+
+
+
 ```
 
-```{r, results='asis'}
-data %>% 
-  slice(1:10) %>% #show only 1:n rows
-  kable(digits=2,align="c")%>% #make table and round to two digits
-  kable_styling(bootstrap_options = 
-                  c("striped", "hover", "condensed", "responsive")) #apply other formatting
+```{r,message=F, warning=F}
+# NDVI （300m ）
+
+ndvi <- raster("data/ndvi_erie_2024_mean.tif")
+ndvi <- projectRaster(ndvi, crs = st_crs(bg)$wkt)
+
+centroids <- st_point_on_surface(bg)
+buffers   <- st_buffer(centroids, 300) |> st_make_valid()
+buffers   <- buffers[st_is(buffers, "POLYGON"), ]
+
+vals <- exact_extract(ndvi, buffers, "mean")
+
+bg <- bg |>
+  left_join(
+    tibble(bg_id = buffers$bg_id, ndvi_mean300 = vals),
+    by = "bg_id" )
+```
+
+```{r,message=F, warning=F}
+#accessible ----
+bg_ll <- st_transform(bg, 4326)
+bbox  <- st_bbox(bg_ll)
+
+# park
+parks_osm <- opq(bbox = bbox) |>
+  add_osm_feature(key = "leisure", value = "park") |>
+  osmdata_sf()
+
+parks_poly <- parks_osm$osm_polygons |>
+  st_make_valid()
+
+# entrance
+entrance_osm <- opq(bbox = bbox) |>
+  add_osm_feature(key = "entrance") |>
+  osmdata_sf()
+
+entrances <- entrance_osm$osm_points
+
+if (nrow(entrances) == 0) {
+  entrances <- st_centroid(st_transform(parks_poly, 4326))} else {
+  entrances <- st_transform(entrances, 4326)}
+
+cent_ll <- st_geometry(bg_ll)
+
+#distance caculate
+dist_mat <- st_distance(cent_ll, st_geometry(entrances))
+min_dist <- apply(dist_mat, 1, min)
+
+bg$dist_to_park_m <- as.numeric(min_dist)
+bg$access_300m    <- bg$dist_to_park_m <= 300
+bg$access_score   <- -bg$dist_to_park_m
 ```
 
 Add any additional processing steps here.
@@ -87,26 +150,96 @@ Tables and figures (maps and other graphics) are carefully planned to convey the
 
 Show tables, plots, etc. and describe them.
 
-```{r, fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
-m <- leaflet(data) %>% 
-  addTiles() %>% 
-  addCircleMarkers(~x, ~y, radius = ~size,color = ~as.factor(category)) %>% 
-  addPopups(~x[2], ~y[2], "Random popup")
-m  # a map with the default OSM tile layer
+```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
+ndvi_breaks <- classIntervals(bg$ndvi_mean300, n = 3, style = "quantile")$brks
+access_breaks <- classIntervals(bg$access_score, n = 3, style = "quantile")$brks
+
+bg$exp_cat <- cut(bg$ndvi_mean300,
+                  breaks = ndvi_breaks,
+                  labels = c("Low", "Med", "High"),
+                  include.lowest = TRUE)
+
+bg$acc_cat <- cut(bg$access_score,
+                  breaks = access_breaks,
+                  labels = c("Low", "Med", "High"),
+                  include.lowest = TRUE)
+
+bg <- bg |>
+  mutate(bi_class = paste0(substr(exp_cat, 1, 1),
+                           substr(acc_cat, 1, 1)))
+
+biv_palette <- c(
+  "LL" = "#e8e8e8",
+  "ML" = "#ace4e4",
+  "HL" = "#5ac8c8",
+  "LM" = "#dfb0d6",
+  "MM" = "#a5add3",
+  "HM" = "#5698b9",
+  "LH" = "#be64ac",
+  "MH" = "#8c62aa",
+  "HH" = "#3b4994")
+
+bg$bi_class <- factor(bg$bi_class, levels = names(biv_palette))
+
 ```
 
-```{r}
-data %>% 
-  ggplot(aes(x=x,y=y,col=category))+
-  geom_point()
+```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
+
+# NDVI Exposure Map
+ggplot(bg) + geom_sf(aes(fill = bi_class), color = "grey40", size = 0.1) +
+scale_fill_manual(values = biv_palette, name = "Exposure × Access") +
+labs(title = "Greenspace Exposure × Access\nErie County, NY") +
+theme_minimal()
+
+# Park Accessibility
+ggplot(bg) + geom_sf(aes(fill = ndvi_mean300), color = "grey40", size = 0.1) +
+scale_fill_gradient(name = "Mean NDVI\n(300 m buffer)",
+low  = "white", high = "darkgreen", na.value = "grey90") +
+labs(title = "Greenspace Exposure (NDVI)\nErie County, NY") +
+theme_minimal()
+bg$access_300m_factor <- factor(bg$access_300m,levels = c(FALSE, TRUE),
+labels = c("Not within 300 m", "Within 300 m"))
+
+ggplot(bg) +geom_sf(aes(fill = access_300m_factor), color = "grey40", size = 0.1) +
+scale_fill_manual(values = c("grey80", "darkgreen"), name = "Park Access") +
+labs(title = "Park Accessibility (≤ 300 m)\nErie County, NY") +
+theme_minimal()
+# Scatter-like Centroid Marker Map
+df_plot <- bg |> st_drop_geometry()
+
+ggplot(df_plot, aes(
+  x    = ndvi_mean300,
+  y    = access_score,
+  size = POP)) +
+  geom_point(alpha = 0.4) +
+  scale_size_continuous(name = "Population") +
+  labs(
+    x = "Mean NDVI (300 m buffer)",
+    y = "Access score (shorter distance = higher)",
+    title = "Greenspace Exposure vs. Access") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
 ```
 
 ### Dygraphs Example
 
-```{r}
-library(dygraphs)
-dygraph(nhtemp, main = "New Haven Temperatures") |> 
-  dyRangeSelector(dateWindow = c("1920-01-01", "1960-01-01")) 
+```{r,message=F, warning=F}
+#csv
+priority_table <- df_plot |>
+  mutate( priority_group = case_when(
+      exp_cat == "High" & acc_cat == "Low"  ~ "High exposure / Low access",
+      exp_cat == "Low"  & acc_cat == "Low"  ~ "Low exposure / Low access",
+      exp_cat == "Low"  & acc_cat == "High" ~ "Low exposure / High access",
+      exp_cat == "High" & acc_cat == "High" ~ "High exposure / High access",
+      TRUE ~ "Other" )) |>
+  group_by(priority_group) |>
+  summarise( n_bg      = n(),total_pop = sum(POP, na.rm = TRUE),.groups   = "drop" )
+
+write.csv(priority_table,
+          "output/priority_block_groups_erie.csv",
+          row.names = FALSE)
 ```
 
 # Conclusions
