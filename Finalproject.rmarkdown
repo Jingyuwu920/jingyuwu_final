@@ -1,0 +1,254 @@
+---
+title: "My Final Project Template"
+author: Your name here
+subtitle: Subtitle here if desired
+date: today
+date-format: long
+---
+
+# Introduction
+
+\[\~ 200 words\]
+
+Clearly stated background and questions / hypotheses / problems being addressed. Sets up the analysis in an interesting and compelling way. Include figures if you like.
+
+# Materials and methods
+
+\[\~ 200 words\]
+
+Narrative: Clear narrative description of the data sources and methods. Includes data from at least two sources that were integrated / merged in R.
+
+Code: The code associated with the project is well organized and easy to follow. Demonstrates mastery of R graphics and functions.
+
+Data: The underlying data are publicly accessible via the web and downloaded/accessed within the Rmd script. If you want to use your own data, you must make it available on a website (e.g. Figshare) so that others are able to re-run your code.
+
+You can do bullets like this:
+
+-   The first most important thing
+-   The second most important thing
+-   The third most important thing
+
+You can do numbers like this:
+
+1.  The first most important thing
+2.  The second most important thing
+3.  The third most important thing
+
+See <http://rmarkdown.rstudio.com/> for all the amazing things you can do.
+
+Here's my first code chunk.
+
+```{r}
+x=3+4
+```
+
+Refer to output in your narrative like this: x=`r x` .
+
+Load any required packages in a code chunk (you may need to install some packages):
+
+```{r, message=F, warning=F}
+library(tidycensus)
+library(tigris)
+library(sf)
+library(sp)
+library(raster)
+library(exactextractr)
+library(tidyverse)
+library(osmdata)
+library(dodgr)
+library(classInt)
+library(ggplot2)
+```
+
+## Download and clean all required data
+
+```{r, message=F, warning=F}
+# Erie County block groups
+census_api_key("695c0ea3ada22e99f85eb2200fd51a7d00469573", install = TRUE, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+acs_year <- 2023
+
+bg <- get_acs(
+  geography = "block group",
+  variables = c(POP = "B01003_001"),
+  state = "NY",
+  county = "Erie",
+  year = acs_year,
+  geometry = TRUE,
+  output = "wide") |>
+  transmute(GEOID, POP = POPE, geometry) |>
+  st_make_valid() |>
+  mutate(bg_id = row_number())
+
+bg <- st_transform(bg, 26918)
+
+
+
+```
+
+```{r,message=F, warning=F}
+# NDVI （300m ）
+
+ndvi <- raster("data/ndvi_erie_2024_mean.tif")
+ndvi <- projectRaster(ndvi, crs = st_crs(bg)$wkt)
+
+centroids <- st_point_on_surface(bg)
+buffers   <- st_buffer(centroids, 300) |> st_make_valid()
+buffers   <- buffers[st_is(buffers, "POLYGON"), ]
+
+vals <- exact_extract(ndvi, buffers, "mean")
+
+bg <- bg |>
+  left_join(
+    tibble(bg_id = buffers$bg_id, ndvi_mean300 = vals),
+    by = "bg_id" )
+```
+
+```{r,message=F, warning=F}
+#accessible ----
+bg_ll <- st_transform(bg, 4326)
+bbox  <- st_bbox(bg_ll)
+
+# park
+parks_osm <- opq(bbox = bbox) |>
+  add_osm_feature(key = "leisure", value = "park") |>
+  osmdata_sf()
+
+parks_poly <- parks_osm$osm_polygons |>
+  st_make_valid()
+
+# entrance
+entrance_osm <- opq(bbox = bbox) |>
+  add_osm_feature(key = "entrance") |>
+  osmdata_sf()
+
+entrances <- entrance_osm$osm_points
+
+if (nrow(entrances) == 0) {
+  entrances <- st_centroid(st_transform(parks_poly, 4326))} else {
+  entrances <- st_transform(entrances, 4326)}
+
+cent_ll <- st_geometry(bg_ll)
+
+#distance caculate
+dist_mat <- st_distance(cent_ll, st_geometry(entrances))
+min_dist <- apply(dist_mat, 1, min)
+
+bg$dist_to_park_m <- as.numeric(min_dist)
+bg$access_300m    <- bg$dist_to_park_m <= 300
+bg$access_score   <- -bg$dist_to_park_m
+```
+
+Add any additional processing steps here.
+
+# Results
+
+\[\~200 words\]
+
+Tables and figures (maps and other graphics) are carefully planned to convey the results of your analysis. Intense exploration and evidence of many trials and failures. The author looked at the data in many different ways before coming to the final presentation of the data.
+
+Show tables, plots, etc. and describe them.
+
+```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
+ndvi_breaks <- classIntervals(bg$ndvi_mean300, n = 3, style = "quantile")$brks
+access_breaks <- classIntervals(bg$access_score, n = 3, style = "quantile")$brks
+
+bg$exp_cat <- cut(bg$ndvi_mean300,
+                  breaks = ndvi_breaks,
+                  labels = c("Low", "Med", "High"),
+                  include.lowest = TRUE)
+
+bg$acc_cat <- cut(bg$access_score,
+                  breaks = access_breaks,
+                  labels = c("Low", "Med", "High"),
+                  include.lowest = TRUE)
+
+bg <- bg |>
+  mutate(bi_class = paste0(substr(exp_cat, 1, 1),
+                           substr(acc_cat, 1, 1)))
+
+biv_palette <- c(
+  "LL" = "#e8e8e8",
+  "ML" = "#ace4e4",
+  "HL" = "#5ac8c8",
+  "LM" = "#dfb0d6",
+  "MM" = "#a5add3",
+  "HM" = "#5698b9",
+  "LH" = "#be64ac",
+  "MH" = "#8c62aa",
+  "HH" = "#3b4994")
+
+bg$bi_class <- factor(bg$bi_class, levels = names(biv_palette))
+
+```
+
+```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
+
+# NDVI Exposure Map
+ggplot(bg) + geom_sf(aes(fill = bi_class), color = "grey40", size = 0.1) +
+scale_fill_manual(values = biv_palette, name = "Exposure × Access") +
+labs(title = "Greenspace Exposure × Access\nErie County, NY") +
+theme_minimal()
+
+# Park Accessibility
+ggplot(bg) + geom_sf(aes(fill = ndvi_mean300), color = "grey40", size = 0.1) +
+scale_fill_gradient(name = "Mean NDVI\n(300 m buffer)",
+low  = "white", high = "darkgreen", na.value = "grey90") +
+labs(title = "Greenspace Exposure (NDVI)\nErie County, NY") +
+theme_minimal()
+bg$access_300m_factor <- factor(bg$access_300m,levels = c(FALSE, TRUE),
+labels = c("Not within 300 m", "Within 300 m"))
+
+ggplot(bg) +geom_sf(aes(fill = access_300m_factor), color = "grey40", size = 0.1) +
+scale_fill_manual(values = c("grey80", "darkgreen"), name = "Park Access") +
+labs(title = "Park Accessibility (≤ 300 m)\nErie County, NY") +
+theme_minimal()
+# Scatter-like Centroid Marker Map
+df_plot <- bg |> st_drop_geometry()
+
+ggplot(df_plot, aes(
+  x    = ndvi_mean300,
+  y    = access_score,
+  size = POP)) +
+  geom_point(alpha = 0.4) +
+  scale_size_continuous(name = "Population") +
+  labs(
+    x = "Mean NDVI (300 m buffer)",
+    y = "Access score (shorter distance = higher)",
+    title = "Greenspace Exposure vs. Access") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+### Dygraphs Example
+
+```{r,message=F, warning=F}
+#csv
+priority_table <- df_plot |>
+  mutate( priority_group = case_when(
+      exp_cat == "High" & acc_cat == "Low"  ~ "High exposure / Low access",
+      exp_cat == "Low"  & acc_cat == "Low"  ~ "Low exposure / Low access",
+      exp_cat == "Low"  & acc_cat == "High" ~ "Low exposure / High access",
+      exp_cat == "High" & acc_cat == "High" ~ "High exposure / High access",
+      TRUE ~ "Other" )) |>
+  group_by(priority_group) |>
+  summarise( n_bg      = n(),total_pop = sum(POP, na.rm = TRUE),.groups   = "drop" )
+
+write.csv(priority_table,
+          "output/priority_block_groups_erie.csv",
+          row.names = FALSE)
+```
+
+# Conclusions
+
+\[\~200 words\]
+
+Clear summary adequately describing the results and putting them in context. Discussion of further questions and ways to continue investigation.
+
+# References
+
+All sources are cited in a consistent manner
+
