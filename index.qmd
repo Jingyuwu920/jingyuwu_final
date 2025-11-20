@@ -105,7 +105,7 @@ bg <- bg |>
     by = "bg_id" )
 ```
 
-```{r,message=F, warning=F}
+```{r,message=F, warning=F,cache=TRUE}
 #accessible ----
 bg_ll <- st_transform(bg, 4326)
 bbox  <- st_bbox(bg_ll)
@@ -114,16 +114,18 @@ bbox  <- st_bbox(bg_ll)
 parks_osm <- opq(bbox = bbox) |>
   add_osm_feature(key = "leisure", value = "park") |>
   osmdata_sf()
-
 parks_poly <- parks_osm$osm_polygons |>
   st_make_valid()
-
 # entrance
 entrance_osm <- opq(bbox = bbox) |>
   add_osm_feature(key = "entrance") |>
   osmdata_sf()
 
 entrances <- entrance_osm$osm_points
+```
+
+```{r,message=F, warning=F,cache=TRUE}
+
 
 if (nrow(entrances) == 0) {
   entrances <- st_centroid(st_transform(parks_poly, 4326))} else {
