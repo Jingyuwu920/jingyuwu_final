@@ -1,50 +1,23 @@
 ---
-title: "My Final Project Template"
-author: Your name here
-subtitle: Subtitle here if desired
+title: "Greenspace Exposure and Park Access in Erie County, NY"
+author: Jingyu Wu
 date: today
 date-format: long
 ---
 
 # Introduction
 
-\[\~ 200 words\]
+Green spaces mitigate environmental exposures and contribute to healthier neighborhood environments, while public parks offer accessible opportunities for recreation, social interaction, and physical activity. Yet, the presence of vegetation and the accessibility of parks do not always align spatially. Some neighborhoods may have abundant street-level vegetation but be far from formal park entrances; others may be adjacent to parks yet lack greenness along residential streets. This study examines neighborhood streetscapes in Erie County, New York, to address two key questions: How is local greenness, measured by the Normalized Difference Vegetation Index (NDVI), related to park accessibility? Where do mismatches or disparities occur?
 
-Clearly stated background and questions / hypotheses / problems being addressed. Sets up the analysis in an interesting and compelling way. Include figures if you like.
+The project proceeds in three steps: (1) calculating mean NDVI within a 300-meter buffer around each census block group centroid as an indicator of everyday greenspace exposure; (2) using OpenStreetMap data to compute network-based distances to the nearest park entrance as a measure of accessibility; and (3) exploring spatial and demographic patterns associated with both indicators. These analyses establish a foundation for subsequent statistical modeling and equity-focused assessment of greenspace and park access in the county.
 
 # Materials and methods
 
-\[\~ 200 words\]
+I first used the tidycensus and tigris packages to download 2023 American Community Survey block group data for Erie County, including total population and polygon geometries. The dataset was cleaned to retain GEOID, population, and geometry, assigned a unique block group ID, and reprojected it.
 
-Narrative: Clear narrative description of the data sources and methods. Includes data from at least two sources that were integrated / merged in R.
+To measure everyday greenspace exposure, I loaded a 2024 mean NDVI GeoTIFF for Erie County (MODIS) using the raster package and projected it to match the block group CRS. For each block group, I created a point-on-surface centroid, buffered it by 300m, and used *exactextractr* to compute the mean NDVI within each buffer. These values were joined back to the block group table as ndvi_mean300.
 
-Code: The code associated with the project is well organized and easy to follow. Demonstrates mastery of R graphics and functions.
-
-Data: The underlying data are publicly accessible via the web and downloaded/accessed within the Rmd script. If you want to use your own data, you must make it available on a website (e.g. Figshare) so that others are able to re-run your code.
-
-You can do bullets like this:
-
--   The first most important thing
--   The second most important thing
--   The third most important thing
-
-You can do numbers like this:
-
-1.  The first most important thing
-2.  The second most important thing
-3.  The third most important thing
-
-See <http://rmarkdown.rstudio.com/> for all the amazing things you can do.
-
-Here's my first code chunk.
-
-```{r}
-x=3+4
-```
-
-Refer to output in your narrative like this: x=`r x` .
-
-Load any required packages in a code chunk (you may need to install some packages):
+Park accessibility was derived from OpenStreetMap using *osmdata*. I downloaded park polygons and entrance points. When explicit entrances were absent, park centroids were used as proxies. Both entrances and block group centroids were transformed to WGS84, and *sf* was used to compute the minimum distance from each block group to the nearest entrance. This produced a continuous distance variable, a 300 m accessibility indicator, and an accessibility score for later mapping and analysis.
 
 ```{r, message=F, warning=F}
 library(tidycensus)
@@ -58,6 +31,7 @@ library(osmdata)
 library(dodgr)
 library(classInt)
 library(ggplot2)
+library(plotly)
 ```
 
 ## Download and clean all required data
@@ -146,11 +120,11 @@ Add any additional processing steps here.
 
 # Results
 
-\[\~200 words\]
+Research findings indicate significant spatial disparities in green space access and park accessibility within Erie County. The first map categorises residential areas based on proximity to park entrances within 300 metres. Park accessibility is predominantly concentrated in downtown Buffalo and several suburban zones, while extensive areas in the county's south and east remain beyond walking distance to any park. The second map displays average NDVI values within 300-metre buffers, revealing lower vegetation cover in densely built-up urban centres and higher NDVI values in suburban areas.
 
-Tables and figures (maps and other graphics) are carefully planned to convey the results of your analysis. Intense exploration and evidence of many trials and failures. The author looked at the data in many different ways before coming to the final presentation of the data.
+To synthesise these two dimensions, a bivariate map categorises each block group by NDVI (low/medium/high) and park accessibility (low/medium/high) quantiles. Multiple census tracts surrounding urban parks in Buffalo exhibit high accessibility but low greenness (LM/LM), indicating limited street-level vegetation despite physical proximity to parks. Conversely, numerous rural areas feature high NDVI values yet extremely low accessibility (high green/high accessible), meaning residents enjoy abundant vegetation but remain distant from formal parks.
 
-Show tables, plots, etc. and describe them.
+A scatter plot of NDVI against accessibility scores further confirms their weak correlation. NDVI values cluster within the 0.20–0.60 range, while accessibility scores exhibit significant variation. This indicates that greenness and proximity to parks function as distinct environmental exposure factors rather than redundant indicators.
 
 ```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
 ndvi_breaks <- classIntervals(bg$ndvi_mean300, n = 3, style = "quantile")$brks
@@ -185,20 +159,16 @@ bg$bi_class <- factor(bg$bi_class, levels = names(biv_palette))
 
 ```
 
-```{r, message=F, warning=F,fig.width=6, fig.height=3, fig.cap="Map of completely random data"}
+```{r, message=F, warning=F}
 
 # NDVI Exposure Map
-ggplot(bg) + geom_sf(aes(fill = bi_class), color = "grey40", size = 0.1) +
-scale_fill_manual(values = biv_palette, name = "Exposure × Access") +
-labs(title = "Greenspace Exposure × Access\nErie County, NY") +
-theme_minimal()
-
-# Park Accessibility
 ggplot(bg) + geom_sf(aes(fill = ndvi_mean300), color = "grey40", size = 0.1) +
 scale_fill_gradient(name = "Mean NDVI\n(300 m buffer)",
 low  = "white", high = "darkgreen", na.value = "grey90") +
 labs(title = "Greenspace Exposure (NDVI)\nErie County, NY") +
 theme_minimal()
+
+# Park Accessibility
 bg$access_300m_factor <- factor(bg$access_300m,levels = c(FALSE, TRUE),
 labels = c("Not within 300 m", "Within 300 m"))
 
@@ -206,10 +176,17 @@ ggplot(bg) +geom_sf(aes(fill = access_300m_factor), color = "grey40", size = 0.1
 scale_fill_manual(values = c("grey80", "darkgreen"), name = "Park Access") +
 labs(title = "Park Accessibility (≤ 300 m)\nErie County, NY") +
 theme_minimal()
+
+# Greenspace Exposure × Access
+ggplot(bg) + geom_sf(aes(fill = bi_class), color = "grey40", size = 0.1) +
+scale_fill_manual(values = biv_palette, name = "Exposure × Access") +
+labs(title = "Greenspace Exposure × Access\nErie County, NY") +
+theme_minimal()
+
 # Scatter-like Centroid Marker Map
 df_plot <- bg |> st_drop_geometry()
 
-ggplot(df_plot, aes(
+p_scatter <- ggplot(df_plot, aes(
   x    = ndvi_mean300,
   y    = access_score,
   size = POP)) +
@@ -222,12 +199,8 @@ ggplot(df_plot, aes(
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5))
 
+ggplotly(p_scatter)
 
-```
-
-### Dygraphs Example
-
-```{r,message=F, warning=F}
 #csv
 priority_table <- df_plot |>
   mutate( priority_group = case_when(
@@ -238,18 +211,26 @@ priority_table <- df_plot |>
       TRUE ~ "Other" )) |>
   group_by(priority_group) |>
   summarise( n_bg      = n(),total_pop = sum(POP, na.rm = TRUE),.groups   = "drop" )
+print(priority_table)
 
-write.csv(priority_table,
-          "output/priority_block_groups_erie.csv",
-          row.names = FALSE)
 ```
 
 # Conclusions
 
-\[\~200 words\]
+This project demonstrates that greenspace exposure and park accessibility represent distinct spatial dimensions of environmental quality in Erie County. Although many neighborhoods in Buffalo lie within short walking distance of a park entrance, they often exhibit relatively low NDVI values, indicating limited everyday vegetation along streets and residential areas. Conversely, outlying suburban and rural tracts tend to have high greenness but poor access to formal parks, reflecting a different type of mismatch between environmental amenities.
 
-Clear summary adequately describing the results and putting them in context. Discussion of further questions and ways to continue investigation.
+This study provides a foundation for future work focused on equity, health, and policy implications. The methods can be extended to examine which populations live in low-greenness or low-access areas, evaluate disparities across income or race, and support targeted investments in street trees, park entrances, and green infrastructure to improve environmental conditions across the county.
 
 # References
 
-All sources are cited in a consistent manner
+Lu, Y., Han, S. S., & Bush, J. (2025). *More parks, more justice? Unpacking distributional and recognitional justice in Shanghai’s urban greening policies*. *Urban Forestry & Urban Greening*.
+
+Kabisch, N., & Haase, D. (2014). Green justice or just green? Provision of urban green spaces in Berlin, Germany. *Landscape and Urban Planning, 122*, 129–139.
+
+Boeing, G. (2017). OSMnx: New methods for acquiring, constructing, analyzing, and visualizing complex street networks. *Computers, Environment and Urban Systems, 65*, 126–139.
+
+Twohig-Bennett, C., & Jones, A. (2018). The health benefits of the great outdoors: A systematic review and meta-analysis of greenspace exposure and health outcomes. *Environmental Research, 166*, 628–637.
+
+Comber, A., Brunsdon, C., & Green, E. (2008). Using a GIS-based network analysis to determine urban greenspace accessibility for different ethnic and religious groups. *Landscape and Urban Planning, 86*(1), 103–114.
+
+Rigolon, A. (2016). A complex landscape of inequity in access to urban parks: A literature review. *Landscape and Urban Planning, 153*, 160–169.
