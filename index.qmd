@@ -63,7 +63,6 @@ bg <- st_transform(bg, 26918)
 
 ```{r,message=F, warning=F}
 # NDVI （300m ）
-
 ndvi <- raster("data/ndvi_erie_2024_mean.tif")
 ndvi <- projectRaster(ndvi, crs = st_crs(bg)$wkt)
 
@@ -217,9 +216,7 @@ print(priority_table)
 
 # Conclusions
 
-This project demonstrates that greenspace exposure and park accessibility represent distinct spatial dimensions of environmental quality in Erie County. Although many neighborhoods in Buffalo lie within short walking distance of a park entrance, they often exhibit relatively low NDVI values, indicating limited everyday vegetation along streets and residential areas. Conversely, outlying suburban and rural tracts tend to have high greenness but poor access to formal parks, reflecting a different type of mismatch between environmental amenities.
-
-This study provides a foundation for future work focused on equity, health, and policy implications. The methods can be extended to examine which populations live in low-greenness or low-access areas, evaluate disparities across income or race, and support targeted investments in street trees, park entrances, and green infrastructure to improve environmental conditions across the county.
+This project demonstrates that greenspace exposure and park accessibility represent distinct spatial dimensions of environmental quality in Erie County. Although many neighborhoods in Buffalo lie within short walking distance of a park entrance, they often exhibit relatively low NDVI values, indicating limited everyday vegetation along streets and residential areas. Conversely, outlying suburban and rural tracts tend to have high greenness but poor access to formal parks, reflecting a different type of mismatch between environmental amenities. This study provides a foundation for future work focused on equity, health, and policy implications. The methods can be extended to examine which populations live in low-greenness or low-access areas, evaluate disparities across income or race, and support targeted investments in street trees, park entrances, and green infrastructure to improve environmental conditions across the county.
 
 # References
 
